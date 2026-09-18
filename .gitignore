@@ -1,1 +1,16 @@
 Context/
+
+# data and generated results (too big / reproducible)
+data/
+data_fake/
+outputs/
+outputs_smoke/
+*.pt
+*.pth
+
+# python / notebooks
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+.DS_Store
