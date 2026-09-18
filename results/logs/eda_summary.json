@@ -1,0 +1,14 @@
+{
+  "totals": {
+    "TEST": 2487,
+    "TRAIN": 9957
+  },
+  "image_sizes_sampled": {
+    "320x240": 800
+  },
+  "modes_sampled": {
+    "RGB": 800
+  },
+  "corrupt_files": [],
+  "all_counts_match_table1": false
+}

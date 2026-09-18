@@ -14,6 +14,8 @@ together with per-class precision/recall, macro-F1 and a confusion matrix. The f
 ```
 proposal/            proposal (LaTeX + PDF)
 docs/PLAN.md         schedule mapped to the course calendar, task split, checklists
+docs/RESULTS.md      results so far (validation only), findings, differences from the proposal
+results/             figures and per-epoch logs from the Colab runs (checkpoints are NOT in the repo)
 src/
   data.py            find TRAIN/TEST folders, transforms, stratified 90/10 train/val split
   model.py           ResNet-50 (transfer learning) + small from-scratch CNN baseline
@@ -82,11 +84,17 @@ Tips
   Run `evaluate.py` on the test folder only for the final chosen configuration.
 * Runs are seeded (`--seed 42`); GPU non-determinism can still cause tiny differences.
 
-## 4. Results (fill in as we go)
+## 4. Results (validation only so far)
 
-| Model | Val acc | Test acc | Macro-F1 | Notes |
-|---|---|---|---|---|
-| Small CNN (scratch) | | | | |
-| ResNet-50, frozen backbone | | | | |
-| ResNet-50, fine-tuned (final) | | | | |
-| Praveen et al. (2021) | – | 0.90 | – | published baseline, YOLOv3 pipeline |
+The official test folder has **not** been used yet; details, figures and caveats are in
+[`docs/RESULTS.md`](docs/RESULTS.md) and `results/`.
+
+| Model | Val acc (best epoch) | Val loss | Test acc | Macro-F1 | Notes |
+|---|---|---|---|---|---|
+| Small CNN (scratch) | 0.950 (ep. 11) | 0.166 | not run | not run | stopped at epoch 14, 16.2 min |
+| ResNet-50, backbone frozen | 0.756 (ep. 2) | 0.752 | not run | not run | first two epochs of the fine-tuning run |
+| ResNet-50, fine-tuned | 1.000 (ep. 4) | 0.0066 | not run | not run | 0.995 at epoch 7; stopped by early stopping, 8.4 min |
+| Praveen et al. (2021) | – | – | 0.90 | – | published baseline, YOLOv3 pipeline (test-set number) |
+
+Validation accuracy is saturated near 100% and validation may be optimistic (possible augmentation overlap between
+splits), so the single test-set evaluation will decide the final result.
