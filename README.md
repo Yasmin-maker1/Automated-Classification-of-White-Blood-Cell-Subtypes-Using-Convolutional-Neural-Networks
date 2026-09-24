@@ -24,10 +24,14 @@ src/
   predict.py         classify single images (the "demo")
   eda.py             class counts vs Table 1, image sizes, corrupt files, sample grid
   leakage_check.py   near-duplicate search between splits (augmentation leakage)
+  gradcam.py         Grad-CAM heatmaps
+  predictor.py       load a checkpoint and classify one image (used by the demo)
   utils.py
 tests/make_fake_data.py   synthetic dataset in the Kaggle layout (for testing only)
 scripts/smoke_test.sh     end-to-end check on fake data, no download needed
 notebooks/colab_quickstart.ipynb   run everything on a free Colab GPU
+notebooks/demo_colab.ipynb         start the live demo in Colab
+demo/                web demo (app.py) and example/showcase preparation (prepare_demo.py)
 ```
 
 ## 1. Setup
@@ -98,3 +102,18 @@ The official test folder has **not** been used yet; details, figures and caveats
 
 Validation accuracy is saturated near 100% and validation may be optimistic (possible augmentation overlap between
 splits), so the single test-set evaluation will decide the final result.
+
+## 5. Live demo
+
+Upload or pick a cell image and see the predicted type, the class probabilities and a Grad-CAM heatmap showing where
+the network looks. Research prototype, not a clinical tool.
+
+```bash
+pip install -r requirements-demo.txt
+python demo/prepare_demo.py --data-root data --checkpoint outputs/resnet50_v1/best.pt   # examples + static showcase figure
+python demo/app.py --checkpoint outputs/resnet50_v1/best.pt                              # add --share for a public link
+```
+
+Easiest on presentation day: open `notebooks/demo_colab.ipynb` in Colab (the trained checkpoint is loaded from Google
+Drive). The examples come from the validation split; the test folder is not used. `results/figures/demo_showcase.png`
+is a static backup of the same examples in case the live demo fails.
