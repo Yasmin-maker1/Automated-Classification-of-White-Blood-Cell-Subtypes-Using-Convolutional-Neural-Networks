@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 
 from data import build_datasets, make_loader
-from model import (build_model, count_parameters, freeze_batchnorm,
+from model import (MODEL_NAMES, build_model, count_parameters, freeze_batchnorm,
                    set_backbone_trainable, split_param_groups)
 from utils import get_device, save_json, set_seed
 
@@ -38,12 +38,13 @@ from utils import get_device, save_json, set_seed
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", default="data", help="folder that contains the unzipped Kaggle dataset")
-    p.add_argument("--model", default="resnet50", choices=["resnet50", "smallcnn"])
+    p.add_argument("--model", default="resnet50", choices=list(MODEL_NAMES))
     p.add_argument("--no-pretrained", action="store_true", help="random init instead of ImageNet weights")
     p.add_argument("--img-size", type=int, default=224)
     p.add_argument("--epochs", type=int, default=15)
     p.add_argument("--freeze-epochs", type=int, default=2,
-                   help="epochs at the start where only the new FC head is trained (resnet50 only)")
+                   help="epochs at the start where only the new head is trained (pretrained models only); "
+                        "set equal to --epochs for a fully frozen-backbone run")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-3, help="learning rate for the classification head")
     p.add_argument("--backbone-lr-mult", type=float, default=0.1,
@@ -52,7 +53,9 @@ def parse_args(argv=None):
     p.add_argument("--scheduler", default="none", choices=["none", "plateau"])
     p.add_argument("--patience", type=int, default=3, help="early stopping patience on validation loss")
     p.add_argument("--val-frac", type=float, default=0.10)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, default=42, help="weight init, data order and augmentation")
+    p.add_argument("--split-seed", type=int, default=42,
+                   help="train/val split; keep it fixed so every model and seed sees the same split")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--amp", action="store_true", help="mixed precision (CUDA only, faster + less memory)")
     p.add_argument("--out-dir", default="outputs")
@@ -117,7 +120,7 @@ def main(argv=None):
     run_dir = Path(args.out_dir) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.seed)
+    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.split_seed)
     classes = data["classes"]
     train_loader = make_loader(data["train"], args.batch_size, True, args.num_workers, args.seed)
     val_loader = make_loader(data["val"], args.batch_size, False, args.num_workers, args.seed)
@@ -135,6 +138,7 @@ def main(argv=None):
 
     save_json(
         {"args": vars(args), "device": str(device), "torch": torch.__version__,
+         "params": count_parameters(model),
          "n_train": len(data["train"]), "n_val": len(data["val"]), "n_test": len(data["test"]),
          "classes": classes},
         run_dir / "config.json",

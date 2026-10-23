@@ -99,7 +99,8 @@ def main(argv=None):
     out_dir = Path(a.out_dir) if a.out_dir else Path(a.checkpoint).parent / "eval"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    data = build_datasets(a.data_root or targs["data_root"], targs["img_size"], targs["val_frac"], targs["seed"])
+    data = build_datasets(a.data_root or targs["data_root"], targs["img_size"], targs["val_frac"],
+                          targs.get("split_seed", targs["seed"]))
     if data["classes"] != classes:
         raise RuntimeError("Class order in the data differs from the checkpoint.")
     test_loader = make_loader(data["test"], a.batch_size, False, a.num_workers, targs["seed"])

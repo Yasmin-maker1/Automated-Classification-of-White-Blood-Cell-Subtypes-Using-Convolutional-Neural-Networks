@@ -20,7 +20,7 @@ def target_layer_for(model: nn.Module) -> nn.Module:
     """Last convolutional stage of each model we use."""
     if hasattr(model, "layer4"):        # torchvision ResNet
         return model.layer4[-1]
-    if hasattr(model, "features"):      # our SmallCNN
+    if hasattr(model, "features"):      # SmallCNN, EfficientNet (last conv block), DenseNet (norm5)
         return model.features[-1]
     raise ValueError("Do not know which layer to use for Grad-CAM on this model.")
 
@@ -33,7 +33,9 @@ class GradCAM:
         target_layer.register_forward_hook(self._forward_hook)
 
     def _forward_hook(self, module, inputs, output):
-        self.acts = output.detach()
+        # clone: DenseNet applies an in-place ReLU right after this layer, which would
+        # otherwise overwrite the stored activations
+        self.acts = output.detach().clone()
         # tensor hook instead of a module backward hook: works with in-place ReLUs
         output.register_hook(lambda g: setattr(self, "grads", g.detach()))
 

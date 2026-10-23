@@ -1,20 +1,25 @@
 """Models for the 4-class white blood cell classifier.
 
-  * resnet50  - main model. ImageNet weights, final FC layer replaced by a
-                4-way linear layer (softmax is applied inside the loss).
-  * smallcnn  - weak from-scratch baseline, used only to show whether transfer
-                learning actually helped (as promised in the proposal).
+  * resnet50        - main model. ImageNet weights, final FC layer replaced by a
+                      4-way linear layer (softmax is applied inside the loss).
+  * efficientnet_b0 - ImageNet weights, last Linear of `classifier` replaced
+                      (1280 -> 4). Its built-in dropout (p=0.2) is kept.
+  * densenet169     - ImageNet weights, `classifier` Linear replaced (1664 -> 4).
+  * smallcnn        - weak from-scratch baseline, used only to show whether transfer
+                      learning actually helped (as promised in the proposal).
 
 The classification head is always called `fc` (resnet50) or `classifier`
-(smallcnn) so that freezing the backbone is a one-liner.
+(every other model) so that freezing the backbone is a one-liner.
 """
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torchvision.models import ResNet50_Weights, resnet50
+from torchvision.models import (DenseNet169_Weights, EfficientNet_B0_Weights, ResNet50_Weights,
+                                densenet169, efficientnet_b0, resnet50)
 
 HEAD_PREFIXES = ("fc.", "classifier.")
+MODEL_NAMES = ("resnet50", "efficientnet_b0", "densenet169", "smallcnn")
 
 
 class SmallCNN(nn.Module):
@@ -46,9 +51,19 @@ def build_model(name: str = "resnet50", num_classes: int = 4, pretrained: bool =
         model = resnet50(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         return model
+    if name == "efficientnet_b0":
+        weights = EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+        model = efficientnet_b0(weights=weights)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+        return model
+    if name == "densenet169":
+        weights = DenseNet169_Weights.IMAGENET1K_V1 if pretrained else None
+        model = densenet169(weights=weights)
+        model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+        return model
     if name == "smallcnn":
         return SmallCNN(num_classes)
-    raise ValueError(f"Unknown model '{name}'. Choose 'resnet50' or 'smallcnn'.")
+    raise ValueError(f"Unknown model '{name}'. Choose one of {MODEL_NAMES}.")
 
 
 def set_backbone_trainable(model: nn.Module, trainable: bool) -> None:
