@@ -115,7 +115,7 @@ def split_from_file(split_file, train_samples, test_samples, train_dir, test_dir
         raise RuntimeError(f"{len(missing)} images are not in the split file {split_file} (e.g. {missing[:3]}). "
                            f"It was made for different data: rerun src/group_split.py.")
     split = np.array([spec[k]["split"] for k in k_train])
-    if set(split) - {"train", "val"}:
+    if set(split) - {"train", "val", "excluded"}:   # excluded = source photo too uncertain to place safely
         raise RuntimeError(f"Unexpected split labels in {split_file}: {sorted(set(split))}")
     train_idx, val_idx = np.where(split == "train")[0], np.where(split == "val")[0]
     clean_test_idx = np.array([i for i, k in enumerate(k_test) if not spec[k]["source_in_train"]], dtype=int)

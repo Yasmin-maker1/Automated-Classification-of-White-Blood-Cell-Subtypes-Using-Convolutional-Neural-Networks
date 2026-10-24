@@ -10,25 +10,25 @@ Method (rotation- and flip-aware):
      rotation about the centre never cuts off, so black corners do not matter). Two feature types:
        resnet50 - ImageNet ResNet-50 last feature map, one descriptor per grid cell (layout-sensitive)
        pixels   - model-free: 48x48 grey thumbnail, band-pass filtered (red-cell outlines)
-     By default both run: the first decides, the second is an independent cross-check.
+     resnet50 decides (default). pixels can be added as a cross-check; on the real data it agreed with
+     resnet50 on only ~25% of images while resnet50's matches were visibly correct, so it is off by default.
   2. Describe every original photo the same way under 2 flips x (360 / angle-step) rotations, with black
      corners exactly like the augmentation produces them (default: every 5 degrees -> 144 views per photo).
   3. Each augmented image is assigned to the original whose best view is most similar (cosine = average
      agreement over the grid cells). Assigning to a known source avoids the "chaining" problem of
      clustering images with a similarity threshold.
-     Safety net: where the two feature types choose DIFFERENT photos for an image, both photos are put in
-     one group, so an uncertain match can never leak a photo across the split.
+     Safety net: images whose best photo is not clearly better than the runner-up (margin < --min-margin)
+     are UNSURE. They are left out of train AND val (so a doubtful match cannot leak a photo), and an unsure
+     test image never counts as "clean".
   4. TRAIN folder -> train / val with StratifiedGroupKFold, groups = source photo, so no photo is shared.
   5. TEST images whose source photo is also in train are flagged; evaluate.py then reports accuracy on
      the full test folder AND on the source-independent ("clean") subset.
 
 Checks printed (and saved) so you can trust or reject the result:
-  * agreement between the two feature types (two independent methods picking the same photo);
   * margin: how much better the chosen photo fits than the runner-up (small margins = unsure);
   * label agreement: does the matched original's label (labels.csv) contain the image's class folder?
     (weak on its own: a wrong photo of the same class also "agrees")
-  * filename check: Kaggle names files _<index>_<random>.jpeg; images sharing an index within one class
-    folder should mostly map to the same source if that index is the source index.
+  * label agreement split by margin band: where the wrong matches live, which justifies --min-margin;
   * similarity / margin distribution and side-by-side pictures of the weakest and random matches: LOOK.
 
     python src/group_split.py --data-root data --out splits/group_split.json
@@ -64,7 +64,6 @@ from model import build_model
 from utils import get_device, save_json, set_seed
 
 AUG_SIZE = (320, 240)  # (W, H) of the augmented Kaggle images; originals are scaled to this first
-FNAME_INDEX = re.compile(r"^_(\d+)_\d+\.")
 
 
 def central_mask(n: int, shrink: float = 0.9) -> torch.Tensor:
@@ -241,27 +240,6 @@ def match_to_originals(aug, orig_views, device, chunk=256):
 # --------------------------------------------------------------------------- #
 # Split
 # --------------------------------------------------------------------------- #
-def merge_groups(primary, others):
-    """Photos chosen for the same image by different feature types end up in one group (union-find).
-    Returns {photo: group name}."""
-    parent = {}
-
-    def find(x):
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for i, p in enumerate(primary):
-        find(p)
-        for o in others:
-            ra, rb = find(p), find(o[i])
-            if ra != rb:
-                parent[max(ra, rb)] = min(ra, rb)
-    return {p: find(p) for p in parent}
-
-
 def group_train_val(classes, groups, val_frac, seed):
     """StratifiedGroupKFold; keep the fold closest to val_frac with the most similar class mix."""
     n_splits = max(2, round(1 / val_frac))
@@ -308,12 +286,15 @@ def plot_matches(rows, out_path, title):
     plt.close(fig)
 
 
-def plot_hist(sim, margin, out_path):
+def plot_hist(sim, margin, out_path, min_margin=None):
     fig, ax = plt.subplots(1, 2, figsize=(10, 3.4))
     ax[0].hist(sim, bins=60, color="#2a6fb0")
     ax[0].set(title="Similarity to the matched original", xlabel="cosine similarity", ylabel="images")
     ax[1].hist(margin, bins=60, color="#d9822b")
     ax[1].set(title="Margin over the second-best original", xlabel="similarity difference", ylabel="images")
+    if min_margin:
+        ax[1].axvline(min_margin, color="black", ls="--", lw=1)
+        ax[1].text(min_margin, ax[1].get_ylim()[1] * 0.95, f"  unsure < {min_margin}", fontsize=8, va="top")
     for a in ax:
         a.grid(alpha=0.3)
     fig.tight_layout()
@@ -334,8 +315,11 @@ def main(argv=None):
     ap.add_argument("--img-size", type=int, default=224)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--num-workers", type=int, default=2)
-    ap.add_argument("--features", nargs="+", default=["resnet50", "pixels"], choices=["resnet50", "pixels"],
-                    help="first one decides the split, the others are cross-checks (default: resnet50 pixels)")
+    ap.add_argument("--features", nargs="+", default=["resnet50"], choices=["resnet50", "pixels"],
+                    help="first one decides the split, any others are only reported as cross-checks")
+    ap.add_argument("--min-margin", type=float, default=0.01,
+                    help="images whose best photo beats the runner-up by less than this are 'unsure' and are "
+                         "excluded from train/val and from the clean test subset")
     ap.add_argument("--no-pretrained", action="store_true", help="random weights (only for smoke tests)")
     ap.add_argument("--n-pairs", type=int, default=8)
     a = ap.parse_args(argv)
@@ -385,48 +369,54 @@ def main(argv=None):
             k += 1
     df = pd.DataFrame(rows)
 
-    # ---- groups: a photo, or several photos linked by disagreeing matches ----
-    other_cols = [f"source_{kd}" for kd in a.features[1:]]
-    group_of = merge_groups(df.source.tolist(), [df[c].tolist() for c in other_cols])
-    df["group"] = df.source.map(group_of)
-    sizes = df.groupby("group").source.nunique()
+    df["group"] = df.source
+    df["unsure"] = df.margin < a.min_margin
 
-    # ---- train / val split by group ----
+    # ---- train / val split by source photo (unsure images are left out) ----
     tr_mask = (df.folder == "TRAIN").to_numpy()
     tr_rows = df[tr_mask]
-    tr_idx, va_idx = group_train_val(tr_rows.y.to_numpy(), tr_rows.group.to_numpy(), a.val_frac, a.split_seed)
+    sure = ~tr_rows.unsure.to_numpy()
+    sure_pos = np.where(sure)[0]
+    tr_i, va_i = group_train_val(tr_rows.y.to_numpy()[sure], tr_rows.source.to_numpy()[sure], a.val_frac, a.split_seed)
+    tr_idx, va_idx = sure_pos[tr_i], sure_pos[va_i]          # positions within the TRAIN folder
     split = np.array(["test"] * len(df), dtype=object)
     tr_pos = np.where(tr_mask)[0]
+    split[tr_pos] = "excluded"
     split[tr_pos[tr_idx]] = "train"
     split[tr_pos[va_idx]] = "val"
     df["split"] = split
     train_sources = set(df.source[df.split == "train"])
-    train_groups = set(df.group[df.split == "train"])
-    df["source_in_train"] = df.group.isin(train_groups)   # conservative: any linked photo counts
-    assert not (set(df.group[df.split == "val"]) & train_groups), "val shares a photo group with train"
+    # "source_in_train" = NOT proven independent of train: photo in train, or the match itself is unsure
+    df["source_in_train"] = df.source.isin(train_sources) | df.unsure
+    assert not (set(df.source[df.split == "val"]) & train_sources), "val shares a photo with train"
+
+    # ---- sanity: refuse to write a degenerate split ----
+    n_tr, n_va = int((df.split == "train").sum()), int((df.split == "val").sum())
+    val_share = n_va / max(n_tr + n_va, 1)
+    if n_tr == 0 or n_va == 0 or not (0.4 * a.val_frac <= val_share <= 2.5 * a.val_frac):
+        raise SystemExit(f"!! Refusing to write the split: train={n_tr}, val={n_va} (val share {val_share:.1%}). "
+                         f"Send this output.")
 
     # ---- diagnostics ----
-    summary = {"features": a.features}
+    summary = {"features": a.features, "min_margin": a.min_margin}
     for kd in a.features[1:]:
         summary[f"agreement_{primary}_vs_{kd}"] = float((df.source == df[f"source_{kd}"]).mean())
-    summary["groups"] = {"n_photos_used": int(df.source.nunique()), "n_groups": int(len(sizes)),
-                         "groups_with_several_photos": int((sizes > 1).sum()), "largest_group_photos": int(sizes.max()),
-                         "largest_group_images": int(df.group.value_counts().max())}
     lab = df.label_ok.dropna().astype(bool)
     summary["label_agreement"] = float(lab.mean()) if len(lab) else None
     summary["label_agreement_by_class"] = (df.dropna(subset=["label_ok"]).assign(ok=lambda d: d.label_ok.astype(bool))
                                            .groupby("class").ok.mean().round(4).to_dict())
+    bands = [0, 0.005, 0.01, 0.02, 0.05, 1.0]
+    band = pd.cut(df.margin, bands, right=False, labels=[f"{lo:.3f}-{hi:.3f}" for lo, hi in zip(bands, bands[1:])])
+    by_band = (df.assign(band=band, ok=df.label_ok.astype(float)).groupby("band", observed=False)
+               .agg(images=("ok", "size"), label_agreement=("ok", "mean")))
+    summary["by_margin_band"] = {str(k): {"images": int(v.images), "label_agreement": round(float(v.label_agreement), 4)}
+                                 for k, v in by_band.iterrows() if v.images}
     summary["similarity"] = {"median": float(df.sim.median()), "p01": float(df.sim.quantile(0.01)),
                              "min": float(df.sim.min())}
-    summary["margin"] = {"median": float(df.margin.median()), "p01": float(df.margin.quantile(0.01)),
-                         "frac_below_0.01": float((df.margin < 0.01).mean())}
-
-    idx = df.path.map(lambda p: (m.group(1) if (m := FNAME_INDEX.match(Path(p).name)) else None))
-    fn = df[(df.folder == "TRAIN") & idx.notna()].assign(fidx=idx)
-    if len(fn) > 0.5 * tr_mask.sum():
-        purity = fn.groupby(["class", "fidx"]).source.agg(lambda s: s.value_counts().iloc[0]).sum() / len(fn)
-        summary["filename_index_purity"] = float(purity)
-        summary["filename_indices_per_class"] = fn.groupby("class").fidx.nunique().to_dict()
+    summary["margin"] = {"median": float(df.margin.median()), "p01": float(df.margin.quantile(0.01))}
+    summary["unsure"] = {"train_folder_excluded": int((df.split == "excluded").sum()),
+                         "test_unsure": int((df.unsure & (df.split == "test")).sum()),
+                         "photos_used": int(df.source.nunique()), "photos_available": len(orig_paths)}
 
     per_class = []
     for c in classes:
@@ -434,15 +424,16 @@ def main(argv=None):
         s_tr, s_va, s_te = (set(d.source[d.split == k]) for k in ("train", "val", "test"))
         per_class.append({"class": c.lower(), "train imgs": int((d.split == "train").sum()),
                           "train photos": len(s_tr), "val imgs": int((d.split == "val").sum()),
-                          "val photos": len(s_va), "test imgs": int((d.split == "test").sum()),
-                          "test photos": len(s_te),
-                          "test imgs with photo in train": int(((d.split == "test") & d.source_in_train).sum())})
+                          "val photos": len(s_va), "excluded (unsure)": int((d.split == "excluded").sum()),
+                          "test imgs": int((d.split == "test").sum()), "test photos": len(s_te),
+                          "test clean": int(((d.split == "test") & ~d.source_in_train).sum())})
     per_class = pd.DataFrame(per_class)
     per_class.to_csv(fig_dir / "per_class_sources.csv", index=False)
 
     test = df[df.split == "test"]
     summary["test"] = {"n": int(len(test)), "n_photos": int(test.source.nunique()),
-                       "n_with_photo_in_train": int(test.source_in_train.sum()),
+                       "n_photo_in_train": int((test.source.isin(train_sources)).sum()),
+                       "n_unsure": int(test.unsure.sum()),
                        "n_clean": int((~test.source_in_train).sum()),
                        "photos_shared_with_train": int(len(set(test.source) & train_sources))}
 
@@ -456,11 +447,12 @@ def main(argv=None):
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     spec = {"method": "assign each augmented image to its most similar original photo (rotation + flip views), "
-                      "StratifiedGroupKFold by photo for train/val",
+                      "StratifiedGroupKFold by photo for train/val, unsure matches excluded",
             "params": {**vars(a), "pretrained": not a.no_pretrained, "n_originals": len(orig_paths)},
             "summary": summary,
             "images": {r.key: {"split": r.split, "source": r.source, "group": r.group, "sim": round(r.sim, 4),
-                               "margin": round(r.margin, 4), "source_in_train": bool(r.source_in_train)}
+                               "margin": round(r.margin, 4), "unsure": bool(r.unsure),
+                               "source_in_train": bool(r.source_in_train)}
                        for r in df.itertuples()}}
     out.write_text(json.dumps(spec, indent=1))
     df.drop(columns=["source_path"]).to_csv(fig_dir / "assignments.csv", index=False)
@@ -468,51 +460,48 @@ def main(argv=None):
 
     def mk(sub):
         return [(r.path, r.source_path, r.flip, r.angle, r.sim, r.margin, r.label_ok) for r in sub.itertuples()]
-    plot_hist(df.sim.to_numpy(), df.margin.to_numpy(), fig_dir / "match_quality.png")
+    plot_hist(df.sim.to_numpy(), df.margin.to_numpy(), fig_dir / "match_quality.png", a.min_margin)
     plot_matches(mk(df.nsmallest(a.n_pairs, "margin")), fig_dir / "weakest_matches.png",
-                 "Weakest matches (smallest margin): are these really the same photo?")
-    plot_matches(mk(df.sample(min(a.n_pairs, len(df)), random_state=a.split_seed)), fig_dir / "random_matches.png",
-                 "Random images and the original photo they were matched to")
-    if summary["test"]["n_with_photo_in_train"]:
-        plot_matches(mk(test[test.source_in_train].sample(min(a.n_pairs, int(test.source_in_train.sum())),
-                                                          random_state=a.split_seed)),
+                 "Weakest matches (smallest margin) - these are excluded as unsure")
+    sure_rows = df[~df.unsure]
+    plot_matches(mk(sure_rows.nsmallest(a.n_pairs, "margin")), fig_dir / "weakest_kept_matches.png",
+                 f"Weakest matches that are KEPT (margin just above {a.min_margin}): same photo?")
+    plot_matches(mk(sure_rows.sample(min(a.n_pairs, len(sure_rows)), random_state=a.split_seed)),
+                 fig_dir / "random_matches.png", "Random kept images and the original photo they were matched to")
+    overlap = test[test.source.isin(train_sources) & ~test.unsure]
+    if len(overlap):
+        plot_matches(mk(overlap.sample(min(a.n_pairs, len(overlap)), random_state=a.split_seed)),
                      fig_dir / "test_overlap_examples.png", "TEST images whose source photo is also in train")
 
     # ---- report ----
     print(f"\n=== Matching quality ({primary} decides) ===")
     for kd in a.features[1:]:
-        print(f"Agreement {primary} vs {kd} (same photo chosen): {summary[f'agreement_{primary}_vs_{kd}']:.1%}")
+        print(f"Cross-check: {primary} vs {kd} chose the same photo for "
+              f"{summary[f'agreement_{primary}_vs_{kd}']:.1%} of images")
     if summary["label_agreement"] is not None:
         print(f"Label agreement (matched photo's label contains the image's class): {summary['label_agreement']:.1%}")
         print(f"  by class: {summary['label_agreement_by_class']}")
     print(f"Similarity to matched photo: median {summary['similarity']['median']:.3f}, "
-          f"1st percentile {summary['similarity']['p01']:.3f}, min {summary['similarity']['min']:.3f}")
-    print(f"Margin over 2nd-best photo:  median {summary['margin']['median']:.3f}, "
-          f"1st percentile {summary['margin']['p01']:.3f}, below 0.01: {summary['margin']['frac_below_0.01']:.1%}")
-    if "filename_index_purity" in summary:
-        print(f"Filename-index purity (same _<index>_ in a class folder -> same photo): "
-              f"{summary['filename_index_purity']:.1%}   indices per class: {summary['filename_indices_per_class']}")
+          f"1st percentile {summary['similarity']['p01']:.3f}")
+    print("By margin (how much the chosen photo beats the runner-up):")
+    print(by_band.assign(label_agreement=lambda d: d.label_agreement.map("{:.1%}".format)).to_string())
+    u = summary["unsure"]
+    print(f"Unsure (margin < {a.min_margin}): {u['train_folder_excluded']} TRAIN-folder images excluded, "
+          f"{u['test_unsure']} TEST images not counted as clean.  Photos used: {u['photos_used']} of "
+          f"{u['photos_available']}")
     print("\n=== Source photos per split ===")
     print(per_class.to_string(index=False))
     t = summary["test"]
-    print(f"\nTEST: {t['n']} images from {t['n_photos']} photos; {t['n_with_photo_in_train']} images "
-          f"({t['n_with_photo_in_train'] / max(t['n'], 1):.1%}) come from {t['photos_shared_with_train']} photos "
-          f"that are also in train.  Clean (source-independent) test subset: {t['n_clean']} images.")
-    g = summary["groups"]
-    print(f"Groups: {g['n_photos_used']} photos used -> {g['n_groups']} groups; {g['groups_with_several_photos']} "
-          f"groups joined several photos because the methods disagreed (largest: {g['largest_group_photos']} photos, "
-          f"{g['largest_group_images']} images)")
+    print(f"\nTEST: {t['n']} images from {t['n_photos']} photos; {t['n_photo_in_train']} images "
+          f"({t['n_photo_in_train'] / max(t['n'], 1):.1%}) come from {t['photos_shared_with_train']} photos that are "
+          f"also in train; {t['n_unsure']} are unsure.  Clean (source-independent) test subset: {t['n_clean']} images.")
     v = summary["val_sharing_photo_with_train"]
     print(f"Validation images whose photo is also in train: random split {v['random_split']:.1%}  ->  "
           f"group split {v['group_split']:.1%}")
-    agree = [summary[f"agreement_{primary}_vs_{kd}"] for kd in a.features[1:]]
-    if g["largest_group_images"] > 0.05 * len(df):
-        print(f"\n!! WARNING: one group holds {g['largest_group_images']} images (>5% of the data): the methods "
-              "disagree a lot and groups are chaining together. Send this output before using the split.")
-    if (summary["label_agreement"] is not None and summary["label_agreement"] < 0.95) or any(x < 0.95 for x in agree):
-        print("\n!! WARNING: label agreement or agreement between methods is below 95%, so the matching "
-              "may be unreliable. Look at weakest_matches.png before using this split.")
-    print(f"\nSplit file: {out}\nFigures/tables: {fig_dir}/  -> LOOK at weakest_matches.png and random_matches.png")
+    if summary["label_agreement"] is not None and summary["label_agreement"] < 0.95:
+        print("\n!! WARNING: label agreement is below 95%, so the matching may be unreliable. "
+              "Look at the figures before using this split.")
+    print(f"\nSplit file: {out}\nFigures/tables: {fig_dir}/  -> LOOK at weakest_kept_matches.png and random_matches.png")
 
 
 if __name__ == "__main__":
