@@ -424,25 +424,33 @@ DenseNet-169, seed 42 (blurrier by design: its last feature map is a 7×7 grid):
 
 Both models are wrong at 0.91–1.00 confidence, so the scores are badly calibrated on these errors. These are 8 hand-picked examples: illustrations and hypotheses, not proof.
 
-## Ablations: augmentation and aspect ratio (runs pending)
+## Ablations: augmentation and aspect ratio
 
-Two SmallCNN ablations, same recipe and split, 3 seeds each: augmentation off (promised at the midterm) and pad-to-square instead of squashing 320×240 to 224×224 (midterm feedback). Results go here once the runs finish.
+Both ablations support the original setup: turning augmentation off and padding to square each made the SmallCNN worse and much less stable on test, so the final pipeline keeps augmentation on and the squash resize.
+
+Same recipe and split as the baseline, 3 seeds each (42, 43, 44); only the one setting changes.
 
 ```bash
 python src/run_experiments.py --data-root data --out-dir $EXP --split-file $SPLIT --only-ablations --amp --num-workers 2
 ```
 
-| Configuration (SmallCNN, 3 seeds) | Val loss | Val accuracy | Test macro-F1 | Clean-test macro-F1 |
-| --- | --- | --- | --- | --- |
-| Baseline: augmentation on, squash | 0.225 ± 0.011 | 0.917 ± 0.008 | 0.865 ± 0.015 | 0.851 ± 0.017 |
-| Augmentation off | pending | pending | pending | pending |
-| Pad to square | pending | pending | pending | pending |
+| Configuration (SmallCNN, 3 seeds) | Val loss | Val accuracy | Test accuracy | Test macro-F1 | Clean-test macro-F1 | Best epoch |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Baseline: augmentation on, squash** | **0.225 ± 0.011** | 0.917 ± 0.008 | **0.862 ± 0.018** | **0.865 ± 0.015** | **0.851 ± 0.017** | 11.0 ± 2.6 |
+| Augmentation off | 0.395 ± 0.116 | 0.859 ± 0.014 | 0.827 ± 0.052 | 0.827 ± 0.053 | 0.812 ± 0.057 | 4.3 ± 1.5 |
+| Pad to square (no distortion) | 0.277 ± 0.069 | **0.938 ± 0.014** | 0.796 ± 0.062 | 0.789 ± 0.061 | 0.780 ± 0.060 | 6.0 ± 3.5 |
 
-A difference smaller than about 0.015 macro-F1 (the seed spread) should be reported as no measurable effect.
+Pad-to-square test macro-F1 per seed: 0.797, 0.735 and 0.856.
+
+What it means:
+
+- Augmentation off: validation loss nearly doubles, training stops after about 4 epochs because the model overfits, and test macro-F1 drops about 4 points with three times the seed spread. Augmentation acts as a regulariser here. It is applied to training images only, so it cannot leak into validation or test.
+- Pad to square: validation accuracy is the highest of any configuration, yet test macro-F1 is about 8 points lower and swings between 0.735 and 0.856 across seeds. A plausible reason: padding shrinks the 4:3 frame into 224×168 pixels plus black bars, so the white cell gets fewer pixels. That is a hypothesis, not tested here.
+- The selection rule (lowest mean validation loss) keeps the baseline, and the test set agrees. Validation accuracy alone would have picked the padded model, which is one more sign that this small validation set is a weak guide.
 
 ## Midterm commitments, limitations and open questions
 
-Every item the midterm deck (slides 4 and 9) promised for the final is delivered except the augmentation ablation, whose runs are pending.
+Every item the midterm deck (slides 4 and 9) promised for the final is delivered.
 
 | Promised at the midterm | Status | Where |
 | --- | --- | --- |
@@ -450,7 +458,7 @@ Every item the midterm deck (slides 4 and 9) promised for the final is delivered
 | Full frozen-backbone run | Done: ResNet-50 frozen, 3 seeds | Steps 6–7 |
 | EfficientNet-B0 and DenseNet-169 under the same recipe | Done, 3 seeds each | Steps 4–7 |
 | Test set touched once: accuracy, per-class precision/recall, macro-F1, confusion matrix, next to the 90% baseline | Done | Steps 7–8 |
-| Augmentation on/off ablation | Runs pending | Ablations |
+| Augmentation on/off ablation | Done: SmallCNN with augmentation off, 3 seeds (plus pad-to-square for the aspect-ratio feedback) | Ablations |
 
 Limitations:
 
