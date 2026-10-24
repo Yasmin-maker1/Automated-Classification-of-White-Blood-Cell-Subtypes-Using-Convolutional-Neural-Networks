@@ -19,6 +19,22 @@ python src/train.py --data-root "$FAKE" --model smallcnn --img-size $IMG \
     --epochs 2 --batch-size 16 --num-workers 0 \
     --out-dir "$OUT" --run-name smoke_smallcnn
 
+# group-aware split by source photo, checked against the known fake sources
+# (pixel features only: the ResNet features need ImageNet weights, which a smoke test cannot download)
+python src/group_split.py --data-root "$FAKE" --out "$OUT/group_split.json" --fig-dir "$OUT/group_split" \
+    --features pixels --img-size $IMG --num-workers 0 --batch-size 32
+python tests/check_group_split.py --data-root "$FAKE" --split-file "$OUT/group_split.json"
+python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments_group" --no-pretrained \
+    --img-size $IMG --epochs 2 --freeze-epochs 1 --baseline-epochs 2 --batch-size 16 --num-workers 0 \
+    --seeds 1 --finetune-models efficientnet_b0 --frozen-models --no-baseline --split-file "$OUT/group_split.json"
+python src/evaluate.py --checkpoint "$OUT/experiments_group/efficientnet_b0_ft_s1/best.pt" --num-workers 0
+python src/aggregate_runs.py --out-dir "$OUT/experiments_group"
+# mixing splits in one results folder must be refused
+if python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments_group" --no-pretrained \
+    --seeds 1 --finetune-models efficientnet_b0 --frozen-models --no-baseline --dry-run 2>/dev/null; then
+    echo "ERROR: run_experiments.py accepted a results folder made with a different split"; exit 1
+fi
+
 # the comparison runner: every backbone, fine-tuned + frozen, 2 seeds, tiny settings
 python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments" --no-pretrained \
     --img-size $IMG --epochs 2 --freeze-epochs 1 --baseline-epochs 2 --batch-size 16 --num-workers 0 \
