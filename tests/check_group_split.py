@@ -4,9 +4,8 @@
 
 Fails (exit code 1) unless
   * at least --min-accuracy of the images are matched to their true photo,
-  * no photo group is on both sides of train/val, and test images are flagged exactly when their group is
-    in train (the split logic itself),
-  * merge_groups() joins photos the way it should (unit test).
+  * no photo is on both sides of train/val, and test images are flagged exactly when their photo is in
+    train or their match is unsure (the split logic itself).
 """
 from __future__ import annotations
 
@@ -17,9 +16,6 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from group_split import merge_groups  # noqa: E402
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -29,11 +25,6 @@ def main():
     a = ap.parse_args()
     problems = []
 
-    # unit test of the safety net: a->b disagreement and b->c disagreement join a, b, c; d stays alone
-    g = merge_groups(["a", "b", "d", "a"], [["b", "c", "d", "a"]])
-    if not (g["a"] == g["b"] == g["c"] and g["d"] != g["a"]):
-        problems.append(f"merge_groups gave {g}")
-
     truth = pd.read_csv(Path(a.data_root) / "fake_sources.csv").set_index("key").source
     got = pd.DataFrame.from_dict(json.loads(Path(a.split_file).read_text())["images"], orient="index")
     if set(got.index) != set(truth.index):
@@ -41,7 +32,8 @@ def main():
     got = got.loc[got.index.intersection(truth.index)]
 
     acc = (got.source == truth[got.index]).mean()
-    print(f"Matched to the true source photo: {acc:.1%} of {len(got)} images (required: {a.min_accuracy:.0%})")
+    print(f"Matched to the true source photo: {acc:.1%} of {len(got)} images (required: {a.min_accuracy:.0%}); "
+          f"excluded as unsure: {int((got.split == 'excluded').sum())}")
     if acc < a.min_accuracy:
         problems.append(f"only {acc:.1%} matched to the true photo")
 
@@ -51,7 +43,7 @@ def main():
     if (got.split == "val").sum() == 0:
         problems.append("validation set is empty")
     test = got[got.split == "test"]
-    expected_flag = test.group.isin(set(got.group[got.split == "train"]))
+    expected_flag = test.group.isin(set(got.group[got.split == "train"])) | test.unsure
     if not (test.source_in_train == expected_flag).all():
         problems.append("test overlap flags are inconsistent with the train groups")
 
