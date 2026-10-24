@@ -1,57 +1,55 @@
-# Results so far (validation only)
+# Results (final, group-aware split)
 
-Status on Sep 18, 2026. **The official test folder has not been used.** All numbers below are validation numbers from
-one run per model (seed 42, Colab T4 GPU, mixed precision). Figures are in `results/figures/`, per-epoch logs in
-`results/logs/`. Trained checkpoints (`best.pt`, ~95 MB for ResNet-50) are **not** in the repo; they are on Google Drive
-(`MyDrive/wbc_project/outputs/`).
+Status on Oct 24, 2026. Colab T4, mixed precision, 3 seeds per configuration (42, 43, 44), mean ± sample std.
+Run outputs (checkpoints, curves, eval folders) are on Google Drive: `MyDrive/wbc_project/experiments_groupsplit/`.
+The midterm numbers (random split) are kept at the end for comparison.
 
-## Data as loaded (differs slightly from Table 1 of the proposal)
+## Split
 
-| Class | Train folder | Test folder |
-|---|---|---|
-| Eosinophil | 2,497 | 623 (proposal: 574) |
-| Lymphocyte | 2,483 | 620 |
-| Monocyte | 2,478 (proposal: 2,487) | 620 |
-| Neutrophil | 2,499 | 624 (proposal: 616) |
-| **Total** | **9,957** (proposal: 9,966) | **2,487** (proposal: 2,430) |
+`src/group_split.py` matches each of the 12,444 images to the original photo it was augmented from (366 photos in
+`dataset-master/JPEGImages`, 144 rotated/flipped views each), then splits train/val by photo (StratifiedGroupKFold,
+20% val). Matches with margin < 0.02 over the second-best photo are left out (label agreement drops to 55–81% below
+that, versus 97.5–100% above).
 
-All images are 320×240 RGB JPEG; no corrupt files. Split used for training: 8,961 train / 996 validation (stratified 10%
-of the train folder) / 2,487 test (sealed). That is 72.0% / 8.0% / 20.0% of 12,444 images.
+| | Images |
+|---|---|
+| Train / validation / excluded (unsure) | 7,436 / 1,738 / 783 |
+| Test folder | 2,487 (113 photos) |
+| Test images whose photo is also in train | 170 (6.8%, 37 photos) |
+| Clean test subset (photo not in train, match sure) | 2,205 |
+| Validation images sharing a photo with train | 0.0% (99.9% with the midterm random split) |
 
-## Runs
+## Model comparison (same recipe for every model)
 
-| Run | Command (abridged) | Stopped | Best epoch | Val loss | Val acc | Time |
-|---|---|---|---|---|---|---|
-| `smallcnn_baseline` | `--model smallcnn --epochs 20 --amp` | epoch 14 (early stopping) | 11 | 0.1656 | 0.9498 | 16.2 min |
-| `resnet50_v1` | `--model resnet50 --epochs 15 --freeze-epochs 2 --amp` | epoch 7 (early stopping) | 4 | 0.0066 | 1.0000 | 8.4 min |
+Selection rule fixed in advance: lowest mean validation loss. Every model was evaluated once on the test folder.
 
-Other ResNet-50 numbers: head-only epochs 1–2 reached validation accuracy 0.680 and 0.756 (first two epochs of the same
-run, not a separate run). After unfreezing, validation accuracy stayed between 0.990 and 1.000 (0.995 at epoch 7).
+| Configuration | Params (M) | Val loss | Val acc | Test macro-F1 | Clean-test macro-F1 |
+|---|---|---|---|---|---|
+| SmallCNN, from scratch (selected) | 0.4 | 0.225 ± 0.011 | 0.917 ± 0.008 | 0.865 ± 0.015 | 0.851 ± 0.017 |
+| DenseNet-169, fine-tuned | 12.5 | 0.275 ± 0.025 | 0.907 ± 0.005 | 0.870 ± 0.011 | 0.856 ± 0.013 |
+| EfficientNet-B0, fine-tuned | 4.0 | 0.262 ± 0.030 | 0.900 ± 0.016 | 0.861 ± 0.010 | 0.846 ± 0.011 |
+| ResNet-50, fine-tuned | 23.5 | 0.293 ± 0.016 | 0.913 ± 0.012 | 0.847 ± 0.011 | 0.836 ± 0.011 |
+| ResNet-50, frozen backbone | 23.5 | 0.654 ± 0.006 | 0.713 ± 0.004 | 0.583 ± 0.009 | 0.579 ± 0.010 |
+
+Ablations (SmallCNN, no augmentation; pad-to-square instead of squash): see `summary.md` on Drive after section 4c
+of `notebooks/colab_quickstart.ipynb`.
 
 ## Findings
 
-1. **Transfer learning helps.** Fine-tuned ResNet-50 reaches ~0.996 validation accuracy within three epochs; the
-   from-scratch CNN plateaus around 0.91–0.95 and stays noisy.
-2. **Validation accuracy is saturated,** so it cannot separate configurations. The test folder must decide, and it is
-   used once, after the configuration is frozen.
-3. **Possible augmentation overlap between splits** (`results/logs/leakage_summary.json`). Nearest-neighbour cosine
-   similarity of ImageNet ResNet-50 features: 25.4% of validation images have a training image at ≥ 0.95, versus 0.5% of
-   test images; the highest test similarity is 0.956 and none reaches 0.98. No near-identical pairs were found by eye
-   (`leakage_top_pairs.png`), but the measure is not rotation-invariant, so rotated copies are not ruled out. Treat as
-   preliminary; validation accuracy may be optimistic.
-4. **Images are wide fields, not tight crops.** Each shows many red blood cells and one white cell, sometimes small or
-   partly cut off. The proposal describes them as pre-cropped single cells; correct this wording in the paper.
+1. Without the leak, performance is ~85% macro-F1, not 99–100%. The midterm "transfer learning wins" result came from
+   the leaky validation split.
+2. The four non-frozen models are within one standard deviation of each other on test.
+3. Frozen ImageNet features are not enough (58% macro-F1): the network has to adapt to these images.
+4. Main confusions: neutrophil ↔ eosinophil (both granulocytes) and monocyte → neutrophil. Lymphocytes are near 100%.
+5. Errors come in whole photos: per test photo, both models get all copies right or all wrong for every monocyte photo
+   (13 right, 3 wrong). The test set has ~113 independent photos, so per-class numbers are less certain than the ±.
+6. Grad-CAM: SmallCNN attends to the white cell even when wrong; DenseNet's attention stays central when the white cell
+   sits near the image edge.
+7. Praveen et al. (2021) report 90% on this dataset with a random split; not reached on a leak-free split.
 
-## Differences from the proposal (record in the paper)
+## Midterm numbers (random split, 1 seed) — superseded
 
-- Loaded counts differ from Table 1 (see above).
-- Augmentation: horizontal flip, rotation ±10°, mild color jitter (brightness/contrast/saturation 0.1, hue 0.02).
-- Optimiser: Adam, head learning rate 1e-3, backbone 1e-4 once unfrozen, weight decay 1e-4, batch size 64; two head-only
-  epochs, then full fine-tuning; early stopping on validation loss (patience 3).
-- No class weights (classes are balanced).
-
-## Not done yet
-
-- Test-set evaluation (`src/evaluate.py`), once, for the final configuration.
-- More seeds; a full frozen-backbone run; a rotation-aware overlap check.
-- Per-class precision/recall and confusion matrix (produced by `evaluate.py`).
+| Run | Best epoch | Val loss | Val acc |
+|---|---|---|---|
+| `smallcnn_baseline` | 11 | 0.1656 | 0.9498 |
+| `resnet50_v1` | 4 | 0.0066 | 1.0000 |
