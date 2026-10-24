@@ -56,6 +56,9 @@ def parse_args(argv=None):
     p.add_argument("--seed", type=int, default=42, help="weight init, data order and augmentation")
     p.add_argument("--split-seed", type=int, default=42,
                    help="train/val split; keep it fixed so every model and seed sees the same split")
+    p.add_argument("--split-file", default=None,
+                   help="group split from src/group_split.py (no source photo shared by train and val); "
+                        "default: stratified random split (midterm behaviour)")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--amp", action="store_true", help="mixed precision (CUDA only, faster + less memory)")
     p.add_argument("--out-dir", default="outputs")
@@ -120,11 +123,12 @@ def main(argv=None):
     run_dir = Path(args.out_dir) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.split_seed)
+    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.split_seed, args.split_file)
     classes = data["classes"]
     train_loader = make_loader(data["train"], args.batch_size, True, args.num_workers, args.seed)
     val_loader = make_loader(data["val"], args.batch_size, False, args.num_workers, args.seed)
     print(f"device={device}  amp={use_amp}  classes={classes}")
+    print(f"split={'group split ' + args.split_file if args.split_file else 'random stratified'}")
     print(f"train={len(data['train'])}  val={len(data['val'])}  test(not touched)={len(data['test'])}")
 
     model = build_model(args.model, len(classes), pretrained=not args.no_pretrained).to(device)

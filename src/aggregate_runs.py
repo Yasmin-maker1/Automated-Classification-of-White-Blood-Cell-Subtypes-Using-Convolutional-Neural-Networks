@@ -42,6 +42,9 @@ def load_runs(out_dir: Path) -> pd.DataFrame:
         if m_path.exists():
             m = json.loads(m_path.read_text())
             row.update(test_acc=m["accuracy"], test_macro_f1=m["macro_f1"])
+            if m.get("clean_subset", {}).get("n"):
+                row.update(clean_test_acc=m["clean_subset"]["accuracy"],
+                           clean_test_macro_f1=m["clean_subset"]["macro_f1"])
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -64,7 +67,7 @@ def main(argv=None):
     runs = load_runs(out_dir)
     if runs.empty:
         raise SystemExit(f"No finished runs found in {out_dir}/")
-    for col in ("test_acc", "test_macro_f1"):
+    for col in ("test_acc", "test_macro_f1", "clean_test_acc", "clean_test_macro_f1"):
         if col not in runs:
             runs[col] = float("nan")
     runs.sort_values(["config", "seed"]).to_csv(out_dir / "summary_runs.csv", index=False)
@@ -74,6 +77,8 @@ def main(argv=None):
         summary.append({"configuration": cfg, "seeds": len(g), "params (M)": f"{g['params_M'].iloc[0]:.1f}",
                         "val loss": mean_std(g["val_loss"], 4), "val acc": mean_std(g["val_acc"], 4),
                         "test acc": mean_std(g["test_acc"], 4), "test macro-F1": mean_std(g["test_macro_f1"], 4),
+                        "clean test acc": mean_std(g["clean_test_acc"], 4),
+                        "clean test macro-F1": mean_std(g["clean_test_macro_f1"], 4),
                         "best epoch": mean_std(g["best_epoch"].astype(float), 1),
                         "min / run": mean_std(g["minutes"], 1)})
     summary = pd.DataFrame(summary)

@@ -20,6 +20,7 @@ Afterwards: python src/aggregate_runs.py --out-dir <same out dir>
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -38,6 +39,7 @@ def parse_args(argv=None):
     p.add_argument("--frozen-models", nargs="*", default=["resnet50"],
                    help="models that also get a frozen-backbone run")
     p.add_argument("--no-baseline", action="store_true", help="skip the from-scratch smallcnn runs")
+    p.add_argument("--split-file", default=None, help="group split from src/group_split.py (recommended)")
     # the shared recipe (same values as the midterm resnet50_v1 run)
     p.add_argument("--epochs", type=int, default=15)
     p.add_argument("--freeze-epochs", type=int, default=2)
@@ -76,6 +78,10 @@ def main(argv=None):
     failed = []
     for i, (name, model, mode, seed, epochs, freeze) in enumerate(grid, 1):
         if (out_dir / name / "history.csv").exists():
+            done_split = json.loads((out_dir / name / "config.json").read_text())["args"].get("split_file")
+            if done_split != a.split_file:
+                sys.exit(f"{name} in {out_dir} was trained with split_file={done_split}, but this call uses "
+                         f"{a.split_file}. Use a different --out-dir so the two splits are not mixed.")
             print(f"[{i}/{len(grid)}] {name}: already done, skipping")
             continue
         cmd = [sys.executable, str(SRC / "train.py"),
@@ -89,6 +95,8 @@ def main(argv=None):
             cmd.append("--amp")
         if a.no_pretrained:
             cmd.append("--no-pretrained")
+        if a.split_file:
+            cmd += ["--split-file", a.split_file]
         print(f"\n[{i}/{len(grid)}] {name}\n  " + " ".join(cmd[1:]))
         if a.dry_run:
             continue

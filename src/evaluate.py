@@ -90,6 +90,8 @@ def main(argv=None):
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--out-dir", default=None, help="defaults to <checkpoint folder>/eval")
+    p.add_argument("--split-file", default=None,
+                   help="defaults to the one used for training; enables the clean-test-subset numbers")
     a = p.parse_args(argv)
 
     device = get_device()
@@ -99,8 +101,9 @@ def main(argv=None):
     out_dir = Path(a.out_dir) if a.out_dir else Path(a.checkpoint).parent / "eval"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    split_file = a.split_file or targs.get("split_file")
     data = build_datasets(a.data_root or targs["data_root"], targs["img_size"], targs["val_frac"],
-                          targs.get("split_seed", targs["seed"]))
+                          targs.get("split_seed", targs["seed"]), split_file)
     if data["classes"] != classes:
         raise RuntimeError("Class order in the data differs from the checkpoint.")
     test_loader = make_loader(data["test"], a.batch_size, False, a.num_workers, targs["seed"])
@@ -142,12 +145,31 @@ def main(argv=None):
                "monocyte_lymphocyte_confusions": mono_lymph,
                "top_confusions": confusions[:5],
                "baseline_praveen_2021": PRAVEEN_BASELINE, "meets_baseline": bool(acc >= PRAVEEN_BASELINE)}
+    clean = data["clean_test_idx"]
+    if clean is not None:
+        metrics["split_file"] = split_file
+        metrics["clean_subset"] = {"n": int(len(clean)), "note": "test images whose source photo is not in train"}
+        if len(clean):
+            yc, pc = y_true[clean], y_pred[clean]
+            _, _, f1c, supc = precision_recall_fscore_support(yc, pc, labels=range(len(classes)), zero_division=0)
+            present = supc > 0  # macro-F1 over the classes that occur in the clean subset
+            metrics["clean_subset"].update(accuracy=float(accuracy_score(yc, pc)),
+                                           macro_f1=float(np.mean(f1c[present])),
+                                           support={c: int(s) for c, s in zip(classes, supc)})
     save_json(metrics, out_dir / "metrics.json")
 
     print(f"\nTest accuracy : {acc:.4f}   (baseline to match: {PRAVEEN_BASELINE:.2f} -> "
           f"{'MET' if acc >= PRAVEEN_BASELINE else 'not met'})")
     print(f"Macro F1      : {macro_f1:.4f}")
-    print(f"Top-2 accuracy: {top2:.4f}\n")
+    print(f"Top-2 accuracy: {top2:.4f}")
+    if clean is not None:
+        cs = metrics["clean_subset"]
+        if cs["n"]:
+            print(f"Clean subset  : {cs['n']} images whose source photo is not in train -> accuracy "
+                  f"{cs['accuracy']:.4f}, macro F1 {cs['macro_f1']:.4f}  (per class: {cs['support']})")
+        else:
+            print("Clean subset  : empty - every test image comes from a photo that is also in train")
+    print()
     print(per_class.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     print(f"\nMonocyte<->lymphocyte confusions: {mono_lymph}")
     print(f"Most common confusions (true -> predicted): {confusions[:3]}")
