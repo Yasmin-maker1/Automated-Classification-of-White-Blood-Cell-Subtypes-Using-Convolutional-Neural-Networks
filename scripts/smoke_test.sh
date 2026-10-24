@@ -28,7 +28,16 @@ python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments_gr
     --img-size $IMG --epochs 2 --freeze-epochs 1 --baseline-epochs 2 --batch-size 16 --num-workers 0 \
     --seeds 1 --finetune-models efficientnet_b0 --frozen-models --no-baseline --split-file "$OUT/group_split.json"
 python src/evaluate.py --checkpoint "$OUT/experiments_group/efficientnet_b0_ft_s1/best.pt" --num-workers 0
+# ablations: SmallCNN without augmentation and with pad-to-square
+python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments_group" \
+    --img-size $IMG --baseline-epochs 2 --batch-size 16 --num-workers 0 \
+    --seeds 1 --only-ablations --split-file "$OUT/group_split.json"
+for r in smallcnn_noaug_s1 smallcnn_pad_s1; do
+    python src/evaluate.py --checkpoint "$OUT/experiments_group/$r/best.pt" --num-workers 0
+done
 python src/aggregate_runs.py --out-dir "$OUT/experiments_group"
+python src/error_analysis.py --exp-dir "$OUT/experiments_group" --split-file "$OUT/group_split.json" \
+    --runs efficientnet_b0_ft_s1 smallcnn_pad_s1
 # mixing splits in one results folder must be refused
 if python src/run_experiments.py --data-root "$FAKE" --out-dir "$OUT/experiments_group" --no-pretrained \
     --seeds 1 --finetune-models efficientnet_b0 --frozen-models --no-baseline --dry-run 2>/dev/null; then
