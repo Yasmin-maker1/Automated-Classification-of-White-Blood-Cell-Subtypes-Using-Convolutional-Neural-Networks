@@ -31,7 +31,7 @@ def main(argv=None):
     model = build_model(ckpt["model_name"], len(classes), pretrained=False)
     model.load_state_dict(ckpt["model_state"])
     model.to(device).eval()
-    tf = build_transforms(ckpt["args"]["img_size"], train=False)
+    tf = build_transforms(ckpt["args"]["img_size"], train=False, resize=ckpt["args"].get("resize", "squash"))
 
     for path in a.images:
         x = tf(Image.open(path).convert("RGB")).unsqueeze(0).to(device)

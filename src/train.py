@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 
-from data import build_datasets, make_loader
+from data import RESIZE_MODES, build_datasets, make_loader
 from model import (MODEL_NAMES, build_model, count_parameters, freeze_batchnorm,
                    set_backbone_trainable, split_param_groups)
 from utils import get_device, save_json, set_seed
@@ -41,6 +41,9 @@ def parse_args(argv=None):
     p.add_argument("--model", default="resnet50", choices=list(MODEL_NAMES))
     p.add_argument("--no-pretrained", action="store_true", help="random init instead of ImageNet weights")
     p.add_argument("--img-size", type=int, default=224)
+    p.add_argument("--resize", default="squash", choices=list(RESIZE_MODES),
+                   help="how 320x240 becomes square: squash (default), pad (black bars), crop (centre crop)")
+    p.add_argument("--no-augment", action="store_true", help="train without flip/rotation/colour jitter (ablation)")
     p.add_argument("--epochs", type=int, default=15)
     p.add_argument("--freeze-epochs", type=int, default=2,
                    help="epochs at the start where only the new head is trained (pretrained models only); "
@@ -123,12 +126,14 @@ def main(argv=None):
     run_dir = Path(args.out_dir) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.split_seed, args.split_file)
+    data = build_datasets(args.data_root, args.img_size, args.val_frac, args.split_seed, args.split_file,
+                          augment=not args.no_augment, resize=args.resize)
     classes = data["classes"]
     train_loader = make_loader(data["train"], args.batch_size, True, args.num_workers, args.seed)
     val_loader = make_loader(data["val"], args.batch_size, False, args.num_workers, args.seed)
     print(f"device={device}  amp={use_amp}  classes={classes}")
-    print(f"split={'group split ' + args.split_file if args.split_file else 'random stratified'}")
+    print(f"split={'group split ' + args.split_file if args.split_file else 'random stratified'}  "
+          f"resize={args.resize}  augmentation={'off' if args.no_augment else 'on'}")
     print(f"train={len(data['train'])}  val={len(data['val'])}  test(not touched)={len(data['test'])}")
 
     model = build_model(args.model, len(classes), pretrained=not args.no_pretrained).to(device)

@@ -20,7 +20,8 @@ class Predictor:
         self.model = build_model(self.model_name, len(self.classes), pretrained=False)
         self.model.load_state_dict(ckpt["model_state"])
         self.model.to(self.device).eval()
-        self.transform = build_transforms(ckpt["args"]["img_size"], train=False)
+        self.transform = build_transforms(ckpt["args"]["img_size"], train=False,
+                                          resize=ckpt["args"].get("resize", "squash"))
         self.cam = GradCAM(self.model, target_layer_for(self.model))
 
     def predict(self, image: Image.Image) -> dict:

@@ -18,10 +18,16 @@ import pandas as pd
 
 
 def config_name(args: dict) -> str:
+    variant = []
+    if args.get("no_augment"):
+        variant.append("no augmentation")
+    if args.get("resize", "squash") != "squash":
+        variant.append(f"{args['resize']} resize")
+    tag = f", {', '.join(variant)}" if variant else ""
     if args["model"] == "smallcnn":
-        return "smallcnn (scratch)"
+        return f"smallcnn (scratch{tag})"
     mode = "frozen" if args["freeze_epochs"] >= args["epochs"] else "fine-tuned"
-    return f"{args['model']} ({mode})"
+    return f"{args['model']} ({mode}{tag})"
 
 
 def load_runs(out_dir: Path) -> pd.DataFrame:

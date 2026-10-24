@@ -67,20 +67,52 @@ def find_split_dirs(data_root: str | Path) -> tuple[Path, Path]:
 # --------------------------------------------------------------------------- #
 # Transforms
 # --------------------------------------------------------------------------- #
-def build_transforms(img_size: int = 224, train: bool = False) -> transforms.Compose:
-    """Bilinear resize (320x240 -> img_size x img_size), then ImageNet normalisation.
+RESIZE_MODES = ("squash", "pad", "crop")
+
+
+def resize_ops(img_size: int, mode: str = "squash") -> list:
+    """How the 320x240 (4:3) frame becomes img_size x img_size.
+
+    squash - resize both sides (default, midterm behaviour): keeps the whole frame, stretches it 4:3 -> 1:1
+    pad    - add black bars top and bottom to 320x320, then resize: no distortion, nothing lost
+             (black matches the corners the Kaggle rotations already have)
+    crop   - resize the short side to img_size, centre crop: no distortion, loses ~25% of the width,
+             so a white cell near the left/right edge can be cut off
+    """
+    bilinear = InterpolationMode.BILINEAR
+    if mode == "squash":
+        return [transforms.Resize((img_size, img_size), interpolation=bilinear)]
+    if mode == "pad":
+        return [transforms.Lambda(pad_to_square), transforms.Resize((img_size, img_size), interpolation=bilinear)]
+    if mode == "crop":
+        return [transforms.Resize(img_size, interpolation=bilinear), transforms.CenterCrop(img_size)]
+    raise ValueError(f"resize mode must be one of {RESIZE_MODES}, got '{mode}'")
+
+
+def pad_to_square(img):
+    """PIL image -> square image, original centred, black bars on the short sides."""
+    w, h = img.size
+    s = max(w, h)
+    left, top = (s - w) // 2, (s - h) // 2
+    return transforms.functional.pad(img, [left, top, s - w - left, s - h - top], fill=0)
+
+
+def build_transforms(img_size: int = 224, train: bool = False, augment: bool = True,
+                     resize: str = "squash") -> transforms.Compose:
+    """Resize (see resize_ops), then ImageNet normalisation.
 
     Training adds the light augmentation described in the proposal: horizontal
     flip, small rotation, mild colour jitter. The dataset is already heavily
-    augmented, so we deliberately do not stack more on top.
+    augmented, so we deliberately do not stack more on top. augment=False turns it
+    off (the augmentation ablation promised at the midterm).
     """
-    resize = transforms.Resize((img_size, img_size), interpolation=InterpolationMode.BILINEAR)
+    sizing = resize_ops(img_size, resize)
     normalise = [transforms.ToTensor(), transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)]
-    if not train:
-        return transforms.Compose([resize, *normalise])
+    if not train or not augment:
+        return transforms.Compose([*sizing, *normalise])
     return transforms.Compose(
         [
-            resize,
+            *sizing,
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(degrees=10),
             transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.02),
@@ -123,7 +155,7 @@ def split_from_file(split_file, train_samples, test_samples, train_dir, test_dir
 
 
 def build_datasets(data_root: str | Path, img_size: int = 224, val_frac: float = 0.10, seed: int = 42,
-                   split_file: str | Path | None = None):
+                   split_file: str | Path | None = None, augment: bool = True, resize: str = "squash"):
     """Return a dict with train/val/test datasets, class names and split indices.
 
     split_file=None -> stratified random split of the TRAIN folder (midterm behaviour).
@@ -131,9 +163,9 @@ def build_datasets(data_root: str | Path, img_size: int = 224, val_frac: float =
     """
     train_dir, test_dir = find_split_dirs(data_root)
 
-    train_full_aug = datasets.ImageFolder(train_dir, transform=build_transforms(img_size, train=True))
-    train_full_eval = datasets.ImageFolder(train_dir, transform=build_transforms(img_size, train=False))
-    test_ds = datasets.ImageFolder(test_dir, transform=build_transforms(img_size, train=False))
+    train_full_aug = datasets.ImageFolder(train_dir, transform=build_transforms(img_size, True, augment, resize))
+    train_full_eval = datasets.ImageFolder(train_dir, transform=build_transforms(img_size, False, resize=resize))
+    test_ds = datasets.ImageFolder(test_dir, transform=build_transforms(img_size, False, resize=resize))
 
     if train_full_aug.classes != test_ds.classes:
         raise RuntimeError(f"TRAIN classes {train_full_aug.classes} != TEST classes {test_ds.classes}")

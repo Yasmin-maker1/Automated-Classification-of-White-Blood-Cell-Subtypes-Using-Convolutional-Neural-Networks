@@ -40,6 +40,10 @@ def parse_args(argv=None):
                    help="models that also get a frozen-backbone run")
     p.add_argument("--no-baseline", action="store_true", help="skip the from-scratch smallcnn runs")
     p.add_argument("--split-file", default=None, help="group split from src/group_split.py (recommended)")
+    p.add_argument("--ablations", action="store_true",
+                   help="also run the SmallCNN ablations: no augmentation (smallcnn_noaug_s<seed>) and "
+                        "pad-to-square instead of squash (smallcnn_pad_s<seed>); same recipe otherwise")
+    p.add_argument("--only-ablations", action="store_true", help="run just the ablations (implies --ablations)")
     # the shared recipe (same values as the midterm resnet50_v1 run)
     p.add_argument("--epochs", type=int, default=15)
     p.add_argument("--freeze-epochs", type=int, default=2)
@@ -58,15 +62,19 @@ def parse_args(argv=None):
 
 
 def build_grid(a):
-    """List of (run_name, model, mode, seed, epochs, freeze_epochs)."""
+    """List of (run_name, model, extra train.py flags, seed, epochs, freeze_epochs)."""
     grid = []
     for seed in a.seeds:
-        for m in a.finetune_models:
-            grid.append((f"{m}_ft_s{seed}", m, "ft", seed, a.epochs, a.freeze_epochs))
-        for m in a.frozen_models:
-            grid.append((f"{m}_frozen_s{seed}", m, "frozen", seed, a.epochs, a.epochs))
-        if not a.no_baseline:
-            grid.append((f"smallcnn_scratch_s{seed}", "smallcnn", "scratch", seed, a.baseline_epochs, 0))
+        if not a.only_ablations:
+            for m in a.finetune_models:
+                grid.append((f"{m}_ft_s{seed}", m, [], seed, a.epochs, a.freeze_epochs))
+            for m in a.frozen_models:
+                grid.append((f"{m}_frozen_s{seed}", m, [], seed, a.epochs, a.epochs))
+            if not a.no_baseline:
+                grid.append((f"smallcnn_scratch_s{seed}", "smallcnn", [], seed, a.baseline_epochs, 0))
+        if a.ablations or a.only_ablations:
+            grid.append((f"smallcnn_noaug_s{seed}", "smallcnn", ["--no-augment"], seed, a.baseline_epochs, 0))
+            grid.append((f"smallcnn_pad_s{seed}", "smallcnn", ["--resize", "pad"], seed, a.baseline_epochs, 0))
     return grid
 
 
@@ -76,7 +84,7 @@ def main(argv=None):
     grid = build_grid(a)
     print(f"{len(grid)} runs -> {out_dir}/")
     failed = []
-    for i, (name, model, mode, seed, epochs, freeze) in enumerate(grid, 1):
+    for i, (name, model, extra, seed, epochs, freeze) in enumerate(grid, 1):
         if (out_dir / name / "history.csv").exists():
             done_split = json.loads((out_dir / name / "config.json").read_text())["args"].get("split_file")
             if done_split != a.split_file:
@@ -91,6 +99,7 @@ def main(argv=None):
                "--batch-size", str(a.batch_size), "--lr", str(a.lr),
                "--backbone-lr-mult", str(a.backbone_lr_mult), "--patience", str(a.patience),
                "--img-size", str(a.img_size), "--num-workers", str(a.num_workers)]
+        cmd += extra
         if a.amp:
             cmd.append("--amp")
         if a.no_pretrained:

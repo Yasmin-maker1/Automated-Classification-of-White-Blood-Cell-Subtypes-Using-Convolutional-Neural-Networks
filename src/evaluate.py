@@ -103,7 +103,7 @@ def main(argv=None):
 
     split_file = a.split_file or targs.get("split_file")
     data = build_datasets(a.data_root or targs["data_root"], targs["img_size"], targs["val_frac"],
-                          targs.get("split_seed", targs["seed"]), split_file)
+                          targs.get("split_seed", targs["seed"]), split_file, resize=targs.get("resize", "squash"))
     if data["classes"] != classes:
         raise RuntimeError("Class order in the data differs from the checkpoint.")
     test_loader = make_loader(data["test"], a.batch_size, False, a.num_workers, targs["seed"])
