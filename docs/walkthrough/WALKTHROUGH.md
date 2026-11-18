@@ -438,14 +438,14 @@ python src/run_experiments.py --data-root data --out-dir $EXP --split-file $SPLI
 | --- | --- | --- | --- | --- | --- | --- |
 | **Baseline: augmentation on, squash** | **0.225 ± 0.011** | 0.917 ± 0.008 | **0.862 ± 0.018** | **0.865 ± 0.015** | **0.851 ± 0.017** | 11.0 ± 2.6 |
 | Augmentation off | 0.395 ± 0.116 | 0.859 ± 0.014 | 0.827 ± 0.052 | 0.827 ± 0.053 | 0.812 ± 0.057 | 4.3 ± 1.5 |
-| Pad to square (no distortion) | 0.277 ± 0.069 | **0.938 ± 0.014** | 0.796 ± 0.062 | 0.789 ± 0.061 | 0.780 ± 0.060 | 6.0 ± 3.5 |
+| Pad to square (no distortion) | 0.277 ± 0.069 | **0.938 ± 0.014** | 0.789 ± 0.062 | 0.796 ± 0.061 | 0.780 ± 0.060 | 6.0 ± 3.5 |
 
 Pad-to-square test macro-F1 per seed: 0.797, 0.735 and 0.856.
 
 What it means:
 
 - Augmentation off: validation loss nearly doubles, training stops after about 4 epochs because the model overfits, and test macro-F1 drops about 4 points with three times the seed spread. Augmentation acts as a regulariser here. It is applied to training images only, so it cannot leak into validation or test.
-- Pad to square: validation accuracy is the highest of any configuration, yet test macro-F1 is about 8 points lower and swings between 0.735 and 0.856 across seeds. A plausible reason: padding shrinks the 4:3 frame into 224×168 pixels plus black bars, so the white cell gets fewer pixels. That is a hypothesis, not tested here.
+- Pad to square: validation accuracy is the highest of any configuration, yet test macro-F1 is about 7 points lower and swings between 0.735 and 0.856 across seeds. A plausible reason: padding shrinks the 4:3 frame into 224×168 pixels plus black bars, so the white cell gets fewer pixels. That is a hypothesis, not tested here.
 - The selection rule (lowest mean validation loss) keeps the baseline, and the test set agrees. Validation accuracy alone would have picked the padded model, which is one more sign that this small validation set is a weak guide.
 
 ## Midterm commitments, limitations and open questions
