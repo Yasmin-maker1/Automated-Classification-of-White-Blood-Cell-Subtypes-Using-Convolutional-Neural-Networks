@@ -37,7 +37,7 @@ Ablations (SmallCNN, same recipe, 3 seeds; only one setting changed):
 |---|---|---|---|---|
 | Baseline: augmentation on, squash resize | 0.225 ± 0.011 | 0.917 ± 0.008 | 0.865 ± 0.015 | 0.851 ± 0.017 |
 | Augmentation off | 0.395 ± 0.116 | 0.859 ± 0.014 | 0.827 ± 0.053 | 0.812 ± 0.057 |
-| Pad to square | 0.277 ± 0.069 | 0.938 ± 0.014 | 0.789 ± 0.061 | 0.780 ± 0.060 |
+| Pad to square | 0.277 ± 0.069 | 0.938 ± 0.014 | 0.796 ± 0.061 | 0.780 ± 0.060 |
 
 Both ablations are worse and less stable than the baseline, so augmentation and the squash resize stay. Pad-to-square
 has the best validation accuracy but the worst test score: validation accuracy alone is not a reliable guide here.
