@@ -28,7 +28,7 @@ also reported on the **clean subset** (2,205 test images whose photo was never i
 | ResNet-50, fine-tuned | 23.5 M | 0.913 ± 0.012 | 0.847 ± 0.011 | 0.836 ± 0.011 |
 | ResNet-50, frozen backbone | 23.5 M | 0.713 ± 0.004 | 0.583 ± 0.009 | 0.579 ± 0.010 |
 | SmallCNN, augmentation off (ablation) | 0.4 M | 0.859 ± 0.014 | 0.827 ± 0.053 | 0.812 ± 0.057 |
-| SmallCNN, pad to square (ablation) | 0.4 M | 0.938 ± 0.014 | 0.789 ± 0.061 | 0.780 ± 0.060 |
+| SmallCNN, pad to square (ablation) | 0.4 M | 0.938 ± 0.014 | 0.796 ± 0.061 | 0.780 ± 0.060 |
 
 * Real performance is ~85–87% macro-F1, not ~100%. The top four models are within one standard deviation of each other.
 * Frozen ImageNet features are not enough; augmentation helps; padding instead of squashing hurts.
